@@ -1,0 +1,4 @@
+lockpicking:
+  success-rate: 0.4 
+  delay: 20 # in ticks, default = 20 = 1 sec
+  cooldown: 600000 # in ms, default = 600k = 10mins

@@ -11,6 +11,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
@@ -26,6 +27,8 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.inventory.EquipmentSlot;
@@ -38,11 +41,14 @@ import org.bukkit.inventory.meta.ItemMeta;
  */
 public class ChestLocking extends JavaPlugin implements Listener {
 
-    private final Map<UUID, Block> lockpickingSessions = new HashMap<>();
+    private final Map<UUID, Block> lockpickingSessions = new HashMap<>(); // stores players and which block theyre lockpickig
+    private final Map<UUID, BukkitRunnable> activeLockpickingTasks = new HashMap<>(); // stores players and which task is running the lockpicking
+    private final Map<Location, Long> chestCooldowns = new HashMap<>(); // stores chests and how recently they have been lockpicked
     private ChestDatabase db = new ChestDatabase();
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
         getServer().getPluginManager().registerEvents(this, this);
     }
 
@@ -149,8 +155,6 @@ public class ChestLocking extends JavaPlugin implements Listener {
                 return;
             } else {
                 // initiate lockpicking
-                p.sendMessage(ChatColor.ITALIC + "" + ChatColor.DARK_RED + "Lockpicking in progress...");
-                e.setCancelled(true);
                 this.lockpickChest(e);
             }
 
@@ -177,13 +181,43 @@ public class ChestLocking extends JavaPlugin implements Listener {
         Block b = e.getClickedBlock();
         Player p = e.getPlayer();
 
+        // we always want to cancel
+        e.setCancelled(true);
+
+        if (lockpickingSessions.containsValue(b)) {
+            p.sendMessage(ChatColor.DARK_RED + "Someone is already lockpicking this chest!");
+            return;
+        }
+
+        // CHEST PICKING COOLDOWNS
+        long now = System.currentTimeMillis();
+        Location chestLoc = b.getLocation();
+
+        if (chestCooldowns.containsKey(chestLoc)) {
+            long lastTime = chestCooldowns.get(chestLoc);
+            int cooldown = getConfig().getInt("lockpicking.cooldown");
+            if (now - lastTime < cooldown) { // 10 seconds cooldown
+                long secondsLeft = (cooldown - (now - lastTime)) / 1000;
+                p.sendMessage(ChatColor.RED + "This chest has been lockpicked recently. Try again in " + secondsLeft + " seconds.");
+                return;
+            } else {
+                chestCooldowns.remove(chestLoc);
+            }
+        }
+
+        // Set cooldown start time
+        chestCooldowns.put(chestLoc, now);
+
+        
+        p.sendMessage(ChatColor.ITALIC + "" + ChatColor.DARK_RED + "Lockpicking in progress...");
+
         BlockState state = b.getState();
         if (!(state instanceof Chest chest)) return;
 
         Inventory chestInv = chest.getInventory();
         int invSize = chestInv.getSize();
 
-        Inventory lockpickInv = Bukkit.createInventory(null, invSize, ChatColor.DARK_GRAY + "Lockpicking...");
+        Inventory lockpickInv = Bukkit.createInventory(null, invSize, ChatColor.DARK_RED + "Lockpicking...");
 
         ItemStack unkPanes = new ItemStack(Material.GRAY_STAINED_GLASS_PANE, 1);
         ItemMeta unkPaneMeta = unkPanes.getItemMeta();
@@ -205,27 +239,37 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
         p.openInventory(lockpickInv);
 
-        // Start searching
+        // LOCKPICKING TASK
+        // TODO - MAKE THIS CONFIG FRIENDLY
         lockpickingSessions.put(p.getUniqueId(), b);
 
-        new BukkitRunnable() {
+        BukkitRunnable task = new BukkitRunnable() {
             int slot = 0;
-
             @Override
             public void run() {
-                if (slot >= invSize) {
+                if (b.getType() != Material.CHEST) {
                     this.cancel();
+                    lockpickingSessions.remove(p.getUniqueId());
+                    activeLockpickingTasks.remove(p.getUniqueId());
                     return;
                 }
 
+                if (slot >= invSize) {
+                    this.cancel();
+                    lockpickingSessions.remove(p.getUniqueId());
+                    activeLockpickingTasks.remove(p.getUniqueId());
+                    return;
+                }
+
+                p.playSound(p.getLocation(), Sound.BLOCK_GRINDSTONE_USE, 0.4f, 0.8f);
+                p.playSound(p.getLocation(), Sound.BLOCK_LEVER_CLICK, 0.3f, 1.2f);
+
                 ItemStack realItem = chestInv.getItem(slot);
 
-                // 40% chance to reveal the real item
-                // we are changing this tho.... based on roguery?? dunno * 1/roguery attribute or smth
-                if (realItem != null && Math.random() < 0.4) {
+                int chance = getConfig().getInt("lockpicking.success-rate");
+                if (realItem != null && Math.random() < chance) {
                     lockpickInv.setItem(slot, realItem.clone());
                 } else {
-                    // Red pane means fail
                     ItemStack failedPane = new ItemStack(Material.RED_STAINED_GLASS_PANE, 1);
                     ItemMeta failMeta = failedPane.getItemMeta();
                     failMeta.setDisplayName(ChatColor.RED + "Nothing found.");
@@ -233,13 +277,44 @@ public class ChestLocking extends JavaPlugin implements Listener {
                     lockpickInv.setItem(slot, failedPane);
                 }
 
-                lockpickInv.setItem(slot+1, curPanes);
-
+                if (slot != invSize - 1) {
+                    lockpickInv.setItem(slot + 1, curPanes);
+                }
                 slot++;
             }
-        }.runTaskTimer(this, 10L, 5L); // Start after 10 ticks, run every 5 ticks
+        };
+
+        activeLockpickingTasks.put(p.getUniqueId(), task);
+        int delay = getConfig().getInt("lockpicking.delay");
+        task.runTaskTimer(this, delay/2, delay);
     }
 
+    /**
+     * Deals with when the lockpicking session is closed
+     * @param event
+     */
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent event) {
+        Player player = (Player) event.getPlayer();
+        UUID uuid = player.getUniqueId();
+
+        // If the player was lockpicking
+        if (lockpickingSessions.containsKey(uuid)) {
+            // Cancel their lockpicking task
+            BukkitRunnable task = activeLockpickingTasks.remove(uuid);
+            if (task != null) {
+                task.cancel();
+            }
+
+            lockpickingSessions.remove(uuid);
+            player.sendMessage(ChatColor.RED + "You stopped lockpicking.");
+        }
+    }
+
+    /**
+     * Deals when something is picked up from the lockpicking session
+     * @param e
+     */
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
         Player player = (Player) e.getWhoClicked();
@@ -249,7 +324,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
         if (!lockpickingSessions.containsKey(uuid)) return;
 
         Inventory clickedInv = e.getClickedInventory();
-        if (clickedInv == null || !e.getView().getTitle().equals(ChatColor.DARK_GRAY + "Lockpicking...")) return;
+        if (clickedInv == null || !e.getView().getTitle().equals(ChatColor.DARK_RED + "Lockpicking...")) return;
 
         ItemStack currentItem = e.getCurrentItem();
         if (currentItem == null) return;
@@ -288,11 +363,6 @@ public class ChestLocking extends JavaPlugin implements Listener {
                 }
             }
         }, 1L); // Give inventory time to update
-    }
-
-    @EventHandler
-    public void onInventoryClose(InventoryCloseEvent e) {
-        lockpickingSessions.remove(e.getPlayer().getUniqueId());
     }
 
     private boolean isDummyPane(ItemStack item) {
@@ -338,6 +408,25 @@ public class ChestLocking extends JavaPlugin implements Listener {
 		}
 	}
 
+
+    /**
+     * Deals with people trying to take stuff out of chests with hoppers.
+     * @param e
+     */
+    @EventHandler
+    public void onChestRemove(InventoryMoveItemEvent e) {
+        // if its not from a chest into a hopper, return
+        if(e.getInitiator().getType() != InventoryType.HOPPER) return;
+        if(e.getSource().getType() != InventoryType.CHEST) return;
+        LockedChest c = db.getChest(e.getSource().getLocation());
+
+        // allow unlocked chests
+        if (c == null) return;
+
+        // otherwise cancel the event
+        e.setCancelled(true);
+    }
+
     /**
      * Deals with if you place a chest next to a locked chest.
      * @param e the event of placing a block 
@@ -356,53 +445,55 @@ public class ChestLocking extends JavaPlugin implements Listener {
             block.getRelative(BlockFace.SOUTH)
         };
 
-        for (Block adjacent : adjacentBlocks) {
-            if (adjacent.getType() == Material.CHEST) {
-                // check if the adjacent chest is locked 
-                if (db.getChest(adjacent.getLocation()) != null) {
-                    // cancel merge by forcing both chests to be single
-                    Bukkit.getScheduler().runTaskLater(this, () -> {
-                        // set placed chest to SINGLE
-                        BlockData placedData = block.getBlockData();
-                        if (placedData instanceof org.bukkit.block.data.type.Chest placedChestData) {
-                            placedChestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
-                            block.setBlockData(placedChestData, false);
-                        }
+        // praise be chatgpt for this logic
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            Block placedBlock = block;
+            if (!(placedBlock.getState() instanceof Chest placedChestState)) return;
 
-                        // set adjacent chest to SINGLE,
-                        // TODO - ONLY SET IT TO SINGLE IF WE KNOW ITS PART OF THE CURRENT CHESTS DOUBLE CHEST
-                        // E.G IF IT HAS CREATED A MERGE
+            Inventory placedInv = placedChestState.getInventory();
+            if (!(placedInv instanceof DoubleChestInventory doubleChestInv)) return;
 
-                        Chest adjacentChest = (Chest) adjacent;
-                        Inventory inventory = adjacentChest.getInventory();                                    
-                        if (inventory instanceof DoubleChestInventory doubleChestInventory) {                                    
-                            // we are dealing with a double chest                                    
-                            DoubleChest doubleChest = (DoubleChest) doubleChestInventory.getHolder();                                    
-                            if (doubleChest != null) {                                    
-                                Chest leftChest = (Chest) doubleChest.getLeftSide();                                    
-                                Chest rightChest = (Chest) doubleChest.getRightSide();
+            DoubleChest doubleChest = (DoubleChest) doubleChestInv.getHolder();
+            if (doubleChest == null) return;
 
-                                // TODO ... maybe here something like
-                                // make sure the chest is not part of a locked chest or smth
-                                if (!((Chest) block == rightChest || (Chest) block == leftChest)) {
-                                    // original code
-                                    BlockData adjacentData = adjacent.getBlockData();
-                                    if (adjacentData instanceof org.bukkit.block.data.type.Chest adjacentChestData) {
-                                        adjacentChestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
-                                        adjacent.setBlockData(adjacentChestData, false);
-                                    }
-                                }
-                                
-                            }
-                        }
+            Chest left = (Chest) doubleChest.getLeftSide();
+            Chest right = (Chest) doubleChest.getRightSide();
 
-                    }, 1L);
-                    // 1L ... because it happens on the same tick, best it can be is the tick afterwards.
-                    // dont say anything to the user. think this is best
+            Location placedLoc = placedBlock.getLocation();
+            Location leftLoc = left.getBlock().getLocation();
+            Location rightLoc = right.getBlock().getLocation();
+
+            boolean isPlacedChestInvolved = placedLoc.equals(leftLoc) || placedLoc.equals(rightLoc);
+            boolean isAdjacentChestInvolved = false;
+
+            for (Block adjacent : adjacentBlocks) {
+                Location adjacentLoc = adjacent.getLocation();
+                if (adjacentLoc.equals(leftLoc) || adjacentLoc.equals(rightLoc)) {
+                    isAdjacentChestInvolved = true;
                     break;
                 }
             }
-        }
+
+            // Only cancel if this chest and one of the adjacent chests formed the double
+            if (isPlacedChestInvolved && isAdjacentChestInvolved) {
+                // Check if either side is locked
+                if (db.getChest(leftLoc) != null || db.getChest(rightLoc) != null) {
+                    // Cancel merge
+                    BlockData placedData = placedBlock.getBlockData();
+                    if (placedData instanceof org.bukkit.block.data.type.Chest placedChestData) {
+                        placedChestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
+                        placedBlock.setBlockData(placedChestData, false);
+                    }
+
+                    Block adjacentBlock = placedLoc.equals(leftLoc) ? right.getBlock() : left.getBlock();
+                    BlockData adjacentData = adjacentBlock.getBlockData();
+                    if (adjacentData instanceof org.bukkit.block.data.type.Chest adjacentChestData) {
+                        adjacentChestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
+                        adjacentBlock.setBlockData(adjacentChestData, false);
+                    }
+                }
+            }
+        }, 1L);
 
     }
 
