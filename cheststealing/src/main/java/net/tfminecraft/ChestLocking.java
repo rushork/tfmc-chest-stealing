@@ -369,12 +369,33 @@ public class ChestLocking extends JavaPlugin implements Listener {
                             block.setBlockData(placedChestData, false);
                         }
 
-                        // set adjacent chest to SINGLE
-                        BlockData adjacentData = adjacent.getBlockData();
-                        if (adjacentData instanceof org.bukkit.block.data.type.Chest adjacentChestData) {
-                            adjacentChestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
-                            adjacent.setBlockData(adjacentChestData, false);
+                        // set adjacent chest to SINGLE,
+                        // TODO - ONLY SET IT TO SINGLE IF WE KNOW ITS PART OF THE CURRENT CHESTS DOUBLE CHEST
+                        // E.G IF IT HAS CREATED A MERGE
+
+                        Chest adjacentChest = (Chest) adjacent;
+                        Inventory inventory = adjacentChest.getInventory();                                    
+                        if (inventory instanceof DoubleChestInventory doubleChestInventory) {                                    
+                            // we are dealing with a double chest                                    
+                            DoubleChest doubleChest = (DoubleChest) doubleChestInventory.getHolder();                                    
+                            if (doubleChest != null) {                                    
+                                Chest leftChest = (Chest) doubleChest.getLeftSide();                                    
+                                Chest rightChest = (Chest) doubleChest.getRightSide();
+
+                                // TODO ... maybe here something like
+                                // make sure the chest is not part of a locked chest or smth
+                                if (!((Chest) block == rightChest || (Chest) block == leftChest)) {
+                                    // original code
+                                    BlockData adjacentData = adjacent.getBlockData();
+                                    if (adjacentData instanceof org.bukkit.block.data.type.Chest adjacentChestData) {
+                                        adjacentChestData.setType(org.bukkit.block.data.type.Chest.Type.SINGLE);
+                                        adjacent.setBlockData(adjacentChestData, false);
+                                    }
+                                }
+                                
+                            }
                         }
+
                     }, 1L);
                     // 1L ... because it happens on the same tick, best it can be is the tick afterwards.
                     // dont say anything to the user. think this is best
