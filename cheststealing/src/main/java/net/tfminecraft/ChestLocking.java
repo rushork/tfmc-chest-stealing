@@ -240,7 +240,6 @@ public class ChestLocking extends JavaPlugin implements Listener {
         p.openInventory(lockpickInv);
 
         // LOCKPICKING TASK
-        // TODO - MAKE THIS CONFIG FRIENDLY
         lockpickingSessions.put(p.getUniqueId(), b);
 
         BukkitRunnable task = new BukkitRunnable() {
@@ -266,7 +265,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
                 ItemStack realItem = chestInv.getItem(slot);
 
-                int chance = getConfig().getInt("lockpicking.success-rate");
+                float chance = (float) getConfig().getDouble("lockpicking.success-rate");
                 if (realItem != null && Math.random() < chance) {
                     lockpickInv.setItem(slot, realItem.clone());
                 } else {
