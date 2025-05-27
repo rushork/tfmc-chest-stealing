@@ -6,30 +6,45 @@ import org.bukkit.World;
 
 import java.io.Serializable;
 
+import me.Plugins.SimpleFactions.Managers.FactionManager;
+import me.Plugins.SimpleFactions.Objects.Faction;
+
 public class LockedChest implements Serializable {
 
     private String owner;
-    private String faction;
+    private String ownerName;
     private String world;
     private int x, y, z;
 
     // constructor
-    public LockedChest(String ownerStr, String factionStr, Location locationLoc) {
+    public LockedChest(String ownerStr, String ownerNameStr, Location locationLoc) {
         this.owner = ownerStr;
-        this.faction = factionStr;
+        this.ownerName = ownerNameStr;
         this.world = locationLoc.getWorld().getName();
         this.x = locationLoc.getBlockX();
         this.y = locationLoc.getBlockY();
         this.z = locationLoc.getBlockZ();
     }
 
-    public Boolean canAccessChest(String userID) {
-        return this.owner.equals(userID);
+    public Boolean canAccessChest(String userID, String userName) {
+
+        // save time, owner check should be fast
+        if (this.owner.equals(userID)) return true;
+
+        Faction userFaction = FactionManager.getByMember(userName);
+        Faction ownerFaction = FactionManager.getByMember(this.getOwnerName());
+
+        if (userFaction == null) return false;
+        if (ownerFaction == null) return false;
+
+        if (userFaction.getId().equals(ownerFaction.getId())) return true;
+
+        return false;
     }
 
     // getters/setters
-     public String getFaction() {
-        return faction;
+     public String getOwnerName() {
+        return ownerName;
     }
 
     public Location getLocation() {
@@ -41,8 +56,8 @@ public class LockedChest implements Serializable {
         return owner;
     }
 
-    public void setFaction(String faction) {
-        this.faction = faction;
+    public void setOwnerName(String name) {
+        this.ownerName = name;
     }
 
     public void setLocation(Location location) {

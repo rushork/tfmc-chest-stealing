@@ -3,14 +3,26 @@ package net.tfminecraft;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
+import me.Plugins.TLibs.TLibs;
+import me.Plugins.TLibs.Enums.APIType;
+import me.Plugins.TLibs.Objects.API.ItemAPI;
+import net.Indyuce.mmocore.api.player.PlayerData;
+import net.Indyuce.mmocore.api.player.attribute.PlayerAttributes.AttributeInstance;
+
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -25,16 +37,21 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerShearEntityEvent;
 import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 
 /** 
  * MAIN
@@ -44,6 +61,8 @@ public class ChestLocking extends JavaPlugin implements Listener {
     private final Map<UUID, Block> lockpickingSessions = new HashMap<>(); // stores players and which block theyre lockpickig
     private final Map<UUID, BukkitRunnable> activeLockpickingTasks = new HashMap<>(); // stores players and which task is running the lockpicking
     private final Map<Location, Long> chestCooldowns = new HashMap<>(); // stores chests and how recently they have been lockpicked
+    private final Map<UUID, List<Integer>> lockpickingSlotOrders = new HashMap<>(); // stores lockpicking slot orders
+
     private ChestDatabase db = new ChestDatabase();
 
     @Override
@@ -53,7 +72,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
     }
 
     /**
-     * Function which handles opening clicking chests.
+     * Function which handles opening/clicking chests.
      * @param e
      */
     @EventHandler
@@ -84,6 +103,13 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
         // if are trying to LOCK the chest
         if(hand.getType().equals(Material.IRON_INGOT) && p.isSneaking()) {
+
+            // check if the iron ingot is an mmoitem
+            ItemAPI api = (ItemAPI) TLibs.getApiInstance(APIType.ITEM_API);
+            if (!(api.getChecker().checkItemWithPath(hand, "m.tools.LOCKING_TOOL"))) {
+                return;
+            }
+ 
             e.setCancelled(true);
 
             if (c == null) {
@@ -99,16 +125,16 @@ public class ChestLocking extends JavaPlugin implements Listener {
                             Chest leftChest = (Chest) doubleChest.getLeftSide();
                             Chest rightChest = (Chest) doubleChest.getRightSide();
 
-                            LockedChest lc = new LockedChest(p.getUniqueId().toString(), "", leftChest.getLocation());
+                            LockedChest lc = new LockedChest(p.getUniqueId().toString(), p.getName(), leftChest.getLocation());
                             db.saveChest(lc);
-                            LockedChest rc = new LockedChest(p.getUniqueId().toString(), "", rightChest.getLocation());
+                            LockedChest rc = new LockedChest(p.getUniqueId().toString(), p.getName(), rightChest.getLocation());
                             db.saveChest(rc);
 
                             p.sendMessage(ChatColor.GOLD + "Successfully locked the double chest!");
                         }
                     } else {
                         // single chest case
-                        c = new LockedChest(p.getUniqueId().toString(), "", b.getLocation());
+                        c = new LockedChest(p.getUniqueId().toString(), p.getName(), b.getLocation());
                         db.saveChest(c);
                         p.sendMessage(ChatColor.GOLD + "Successfully locked the chest!");
                     }
@@ -116,7 +142,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
             } else {
                 // unlocking chests
-                if (p.getUniqueId().toString() != null && c.canAccessChest(p.getUniqueId().toString())) {
+                if (p.getUniqueId().toString() != null && c.canAccessChest(p.getUniqueId().toString(), p.getName())) {
                     BlockState chestState = b.getState();
                     if (chestState instanceof Chest chest) {                                    
                         Inventory inventory = chest.getInventory();                                    
@@ -150,7 +176,13 @@ public class ChestLocking extends JavaPlugin implements Listener {
                     p.isSneaking()
         ) {
 
-            if (c.canAccessChest(p.getUniqueId().toString())) {
+            // check if the shears is an mmoitem
+            ItemAPI api = (ItemAPI) TLibs.getApiInstance(APIType.ITEM_API);
+            if (!(api.getChecker().checkItemWithPath(hand, "m.tools.LOCKPICK"))) {
+                return;
+            }
+ 
+            if (c.canAccessChest(p.getUniqueId().toString(), p.getName())) {
                 p.sendMessage(ChatColor.DARK_RED + "Sorry, you can't lockpick your own chest!");
                 return;
             } else {
@@ -162,11 +194,9 @@ public class ChestLocking extends JavaPlugin implements Listener {
             // normal chest opening, unless its locked!
             if (c != null) {
                 // if the user does not have access, close the event
-                if (p.getUniqueId().toString() != null && !c.canAccessChest(p.getUniqueId().toString())) {
+                if (p.getUniqueId().toString() != null && !c.canAccessChest(p.getUniqueId().toString(), p.getName())) {
                     p.sendMessage(ChatColor.DARK_RED + "Sorry, you can't open a locked chest!");
                     e.setCancelled(true);
-                } else {
-                    b.setMetadata(getName(), null);
                 }
                 
             }
@@ -174,14 +204,24 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
     }
 
-    /**
-     * Initiate the lockpicking logic
-     */
+    @EventHandler
+    public void ShearSheep (PlayerShearEntityEvent e) {
+
+        Player p = e.getPlayer();
+
+        ItemStack hand = p.getInventory().getItemInMainHand();
+        // check if the shears is an mmoitem
+        ItemAPI api = (ItemAPI) TLibs.getApiInstance(APIType.ITEM_API);
+        if (api.getChecker().checkItemWithPath(hand, "m.tools.LOCKPICK")) {
+            e.setCancelled(true);
+        }
+    }
+
+    
     private void lockpickChest(PlayerInteractEvent e) {
         Block b = e.getClickedBlock();
         Player p = e.getPlayer();
 
-        // we always want to cancel
         e.setCancelled(true);
 
         if (lockpickingSessions.containsValue(b)) {
@@ -189,26 +229,20 @@ public class ChestLocking extends JavaPlugin implements Listener {
             return;
         }
 
-        // CHEST PICKING COOLDOWNS
         long now = System.currentTimeMillis();
         Location chestLoc = b.getLocation();
-
         if (chestCooldowns.containsKey(chestLoc)) {
             long lastTime = chestCooldowns.get(chestLoc);
             int cooldown = getConfig().getInt("lockpicking.cooldown");
-            if (now - lastTime < cooldown) { // 10 seconds cooldown
+            if (now - lastTime < cooldown) {
                 long secondsLeft = (cooldown - (now - lastTime)) / 1000;
-                p.sendMessage(ChatColor.RED + "This chest has been lockpicked recently. Try again in " + secondsLeft + " seconds.");
+                p.sendMessage(ChatColor.RED + "Try again in " + secondsLeft + " seconds.");
                 return;
             } else {
                 chestCooldowns.remove(chestLoc);
             }
         }
-
-        // Set cooldown start time
         chestCooldowns.put(chestLoc, now);
-
-        
         p.sendMessage(ChatColor.ITALIC + "" + ChatColor.DARK_RED + "Lockpicking in progress...");
 
         BlockState state = b.getState();
@@ -216,30 +250,50 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
         Inventory chestInv = chest.getInventory();
         int invSize = chestInv.getSize();
-
         Inventory lockpickInv = Bukkit.createInventory(null, invSize, ChatColor.DARK_RED + "Lockpicking...");
 
-        ItemStack unkPanes = new ItemStack(Material.GRAY_STAINED_GLASS_PANE, 1);
-        ItemMeta unkPaneMeta = unkPanes.getItemMeta();
-        unkPaneMeta.setDisplayName("???");
-        unkPanes.setItemMeta(unkPaneMeta);
+        NamespacedKey dummyKey = new NamespacedKey(this, "dummy");
 
-        ItemStack curPanes = new ItemStack(Material.BLACK_STAINED_GLASS_PANE, 1);
-        ItemMeta curPanesMeta = curPanes.getItemMeta();
-        curPanesMeta.setDisplayName("Searching");
-        curPanes.setItemMeta(curPanesMeta);
+        ItemStack unkPane = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
+        ItemMeta unkMeta = unkPane.getItemMeta();
+        unkMeta.setDisplayName("???");
+        unkMeta.getPersistentDataContainer().set(dummyKey, PersistentDataType.BYTE, (byte) 1);
+        unkPane.setItemMeta(unkMeta);
 
-        for (int i = 0; i < chestInv.getSize(); i++) {
-            if (i == 0) {
-                lockpickInv.setItem(i, curPanes);
-            } else {
-                lockpickInv.setItem(i, unkPanes);
-            }
+        ItemStack curPane = new ItemStack(Material.BLACK_STAINED_GLASS_PANE);
+        ItemMeta curMeta = curPane.getItemMeta();
+        curMeta.setDisplayName("Searching");
+        curMeta.getPersistentDataContainer().set(dummyKey, PersistentDataType.BYTE, (byte) 1);
+        curPane.setItemMeta(curMeta);
+
+        List<Integer> randomizedSlots = IntStream.range(0, invSize).boxed().collect(Collectors.toList());
+        Collections.shuffle(randomizedSlots);
+        lockpickingSlotOrders.put(p.getUniqueId(), randomizedSlots);
+
+        boolean start = true;
+        for (Integer slot : randomizedSlots) {
+            lockpickInv.setItem(slot, start ? curPane : unkPane);
+            start = false;
         }
 
-        p.openInventory(lockpickInv);
+        AttributeInstance dexterityAttr = PlayerData.get(p.getUniqueId()).getAttributes().getInstance("dexterity");
+        int dexterity = dexterityAttr.getTotal(); // dexterity ranges from 0 to 40
 
-        // LOCKPICKING TASK
+        // linear interp for each one
+        double minSuccess = getConfig().getDouble("lockpicking.success-rate.min", 0.4);
+        double maxSuccess = getConfig().getDouble("lockpicking.success-rate.max", 0.9);
+        double lockpickSuccessRate = minSuccess + ((maxSuccess - minSuccess) * dexterity / 40.0);
+
+        double minBreak = getConfig().getDouble("lockpicking.break-chance.min", 0.01);
+        double maxBreak = getConfig().getDouble("lockpicking.break-chance.max", 0.15);
+        double lockpickBreakChance = maxBreak - ((maxBreak - minBreak) * dexterity / 40.0);
+
+        long minDelay = getConfig().getLong("lockpicking.delay.min", 5L);
+        long maxDelay = getConfig().getLong("lockpicking.delay.max", 20L);
+        long lockpickDelay = maxDelay - (long)((maxDelay - minDelay) * dexterity / 40.0);
+
+
+        p.openInventory(lockpickInv);
         lockpickingSessions.put(p.getUniqueId(), b);
 
         BukkitRunnable task = new BukkitRunnable() {
@@ -247,46 +301,58 @@ public class ChestLocking extends JavaPlugin implements Listener {
             @Override
             public void run() {
                 if (b.getType() != Material.CHEST) {
-                    this.cancel();
-                    lockpickingSessions.remove(p.getUniqueId());
-                    activeLockpickingTasks.remove(p.getUniqueId());
+                    cleanup();
                     return;
                 }
 
                 if (slot >= invSize) {
-                    this.cancel();
-                    lockpickingSessions.remove(p.getUniqueId());
-                    activeLockpickingTasks.remove(p.getUniqueId());
+                    cleanup();
+                    return;
+                }
+
+                if (Math.random() < lockpickBreakChance) {
+                    p.getInventory().setItemInMainHand(null);
+                    p.playSound(p.getLocation(), Sound.ENTITY_ITEM_BREAK, 1f, 1f);
+                    p.sendMessage(ChatColor.RED + "Your lockpick broke!");
+                    cleanup();
                     return;
                 }
 
                 p.playSound(p.getLocation(), Sound.BLOCK_GRINDSTONE_USE, 0.4f, 0.8f);
                 p.playSound(p.getLocation(), Sound.BLOCK_LEVER_CLICK, 0.3f, 1.2f);
 
-                ItemStack realItem = chestInv.getItem(slot);
+                int chestSlot = randomizedSlots.get(slot);
+                ItemStack realItem = chestInv.getItem(chestSlot);
 
-                float chance = (float) getConfig().getDouble("lockpicking.success-rate");
-                if (realItem != null && Math.random() < chance) {
-                    lockpickInv.setItem(slot, realItem.clone());
+                if (realItem != null && Math.random() < lockpickSuccessRate) {
+                    lockpickInv.setItem(chestSlot, realItem.clone());
                 } else {
-                    ItemStack failedPane = new ItemStack(Material.RED_STAINED_GLASS_PANE, 1);
-                    ItemMeta failMeta = failedPane.getItemMeta();
+                    ItemStack failPane = new ItemStack(Material.RED_STAINED_GLASS_PANE);
+                    ItemMeta failMeta = failPane.getItemMeta();
                     failMeta.setDisplayName(ChatColor.RED + "Nothing found.");
-                    failedPane.setItemMeta(failMeta);
-                    lockpickInv.setItem(slot, failedPane);
+                    failMeta.getPersistentDataContainer().set(dummyKey, PersistentDataType.BYTE, (byte) 1);
+                    failPane.setItemMeta(failMeta);
+                    lockpickInv.setItem(chestSlot, failPane);
                 }
 
-                if (slot != invSize - 1) {
-                    lockpickInv.setItem(slot + 1, curPanes);
+                if (slot < invSize - 1) {
+                    int nextSlot = randomizedSlots.get(slot + 1);
+                    lockpickInv.setItem(nextSlot, curPane);
                 }
+
                 slot++;
+            }
+
+            void cleanup() {
+                this.cancel();
+                activeLockpickingTasks.remove(p.getUniqueId());
             }
         };
 
         activeLockpickingTasks.put(p.getUniqueId(), task);
-        int delay = getConfig().getInt("lockpicking.delay");
-        task.runTaskTimer(this, delay/2, delay);
+        task.runTaskTimer(this, lockpickDelay / 2, lockpickDelay);
     }
+
 
     /**
      * Deals with when the lockpicking session is closed
@@ -310,10 +376,6 @@ public class ChestLocking extends JavaPlugin implements Listener {
         }
     }
 
-    /**
-     * Deals when something is picked up from the lockpicking session
-     * @param e
-     */
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
         Player player = (Player) e.getWhoClicked();
@@ -325,51 +387,54 @@ public class ChestLocking extends JavaPlugin implements Listener {
         Inventory clickedInv = e.getClickedInventory();
         if (clickedInv == null || !e.getView().getTitle().equals(ChatColor.DARK_RED + "Lockpicking...")) return;
 
-        ItemStack currentItem = e.getCurrentItem();
-        if (currentItem == null) return;
-
-        Material mat = currentItem.getType();
-
-        // Prevent removing panes
-        if (mat == Material.GRAY_STAINED_GLASS_PANE || 
-            mat == Material.RED_STAINED_GLASS_PANE ||
-            mat == Material.BLACK_STAINED_GLASS_PANE
-        ) {
+        ItemStack clickedItem = e.getCurrentItem();
+        if (clickedItem == null || isDummyPane(clickedItem)) {
             e.setCancelled(true);
             return;
         }
 
-        // If it's a valid item, wait for them to take it out
-        // USE OF AI GENERATED CODE HERE..... maybe needs a rewrite (but seems fine)
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            Block chestBlock = lockpickingSessions.get(uuid);
-            if (!(chestBlock.getState() instanceof Chest chest)) return;
+        // Only allow left click in the top inventory
+        if (e.getClickedInventory() == e.getView().getTopInventory()) {
+            ClickType click = e.getClick();
 
-            Inventory chestInv = chest.getInventory();
-            Inventory fakeInv = e.getView().getTopInventory();
+            if (click == ClickType.LEFT) {
+                // Give the item to the player
+                HashMap<Integer, ItemStack> leftovers = player.getInventory().addItem(clickedItem.clone());
 
-            for (int i = 0; i < fakeInv.getSize(); i++) {
-                ItemStack fakeItem = fakeInv.getItem(i);
-                ItemStack realItem = chestInv.getItem(i);
-
-                boolean isFakePane = isDummyPane(fakeItem);
-
-                // Only sync if:
-                // - Slot was emptied (fake is null, real was not)
-                // - Slot now has a real item (not a dummy pane)
-                if ((fakeItem == null && realItem != null) || (!isFakePane && !itemsEqual(fakeItem, realItem))) {
-                    chestInv.setItem(i, fakeItem); // could be null (taken) or actual item
+                // If it didn't fully fit, don't take it out
+                if (!leftovers.isEmpty()) {
+                    player.sendMessage(ChatColor.RED + "You don't have enough inventory space!");
+                    e.setCancelled(true);
+                    return;
                 }
+
+                // Remove from both GUI and real chest
+                int slot = e.getSlot();
+                clickedInv.setItem(slot, null);
+
+                Block chestBlock = lockpickingSessions.get(uuid);
+                if (chestBlock.getState() instanceof Chest chest) {
+                    chest.getInventory().setItem(slot, null);
+                }
+            } else {
+                e.setCancelled(true);
+                player.sendMessage(ChatColor.RED + "Only left-clicking is allowed!");
             }
-        }, 1L); // Give inventory time to update
+        } else {
+            // Prevent putting stuff in from player inventory
+            e.setCancelled(true);
+        }
     }
 
+
+
     private boolean isDummyPane(ItemStack item) {
-        if (item == null) return false;
-        Material mat = item.getType();
-        return mat == Material.GRAY_STAINED_GLASS_PANE ||
-            mat == Material.RED_STAINED_GLASS_PANE ||
-            mat == Material.BLACK_STAINED_GLASS_PANE;
+        if (item == null || !item.hasItemMeta()) return false;
+
+        ItemMeta meta = item.getItemMeta();
+        NamespacedKey key = new NamespacedKey(this, "dummy");
+
+        return meta.getPersistentDataContainer().has(key, PersistentDataType.BYTE);
     }
 
     private boolean itemsEqual(ItemStack a, ItemStack b) {
@@ -388,7 +453,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
             // Is the person breaking the chest the owner/in faction?
             Player p = e.getPlayer();
-            if (p.getUniqueId().toString() != null && !c.canAccessChest(p.getUniqueId().toString())) {
+            if (p.getUniqueId().toString() != null && !c.canAccessChest(p.getUniqueId().toString(), p.getName())) {
                 p.sendMessage(ChatColor.DARK_RED + "Sorry, you can't break a locked chest!");
                 e.setCancelled(true);
             }

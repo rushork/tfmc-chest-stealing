@@ -1,4 +1,11 @@
 lockpicking:
-  success-rate: 0.4 
-  delay: 20 # in ticks
-  cooldown: 600000 # in ms, default = 600k = 10mins
+  success-rate:
+    min: 0.4
+    max: 0.9
+  break-chance:
+    min: 0.01
+    max: 0.15
+  delay:
+    min: 5
+    max: 20
+  cooldown: 600000 # in ms, default = 600k = 10mins=
