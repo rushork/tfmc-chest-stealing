@@ -9,3 +9,5 @@ lockpicking:
     min: 5
     max: 20
   cooldown: 600000 # in ms, default = 600k = 10mins=
+chest:
+  max-chests: 8

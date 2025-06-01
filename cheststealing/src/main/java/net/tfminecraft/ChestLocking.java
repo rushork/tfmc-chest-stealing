@@ -37,6 +37,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -53,7 +54,7 @@ import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
-/** 
+/**
  * MAIN
  */
 public class ChestLocking extends JavaPlugin implements Listener {
@@ -64,11 +65,13 @@ public class ChestLocking extends JavaPlugin implements Listener {
     private final Map<UUID, List<Integer>> lockpickingSlotOrders = new HashMap<>(); // stores lockpicking slot orders
 
     private ChestDatabase db = new ChestDatabase();
+    CommandManager commands = new CommandManager();
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         getServer().getPluginManager().registerEvents(this, this);
+        getCommand(commands.cmd1).setExecutor(commands);
     }
 
     /**
@@ -117,9 +120,15 @@ public class ChestLocking extends JavaPlugin implements Listener {
                 BlockState chestState = b.getState();
                 if (chestState instanceof Chest chest) {
                     Inventory inventory = chest.getInventory();
-
                     if (inventory instanceof DoubleChestInventory doubleChestInventory) {
                         // we are dealing with a double chest
+
+                        Integer lockedChestCount = db.getChestCountUser(p.getUniqueId());
+                        if ((lockedChestCount+2) > getConfig().getInt("chest.max-chests")) {
+                            p.sendMessage(ChatColor.DARK_RED + "Sorry, you have locked too many chests!");
+                            return;
+                        }
+
                         DoubleChest doubleChest = (DoubleChest) doubleChestInventory.getHolder();
                         if (doubleChest != null) {
                             Chest leftChest = (Chest) doubleChest.getLeftSide();
@@ -133,6 +142,14 @@ public class ChestLocking extends JavaPlugin implements Listener {
                             p.sendMessage(ChatColor.GOLD + "Successfully locked the double chest!");
                         }
                     } else {
+
+                        
+                        Integer lockedChestCount = db.getChestCountUser(p.getUniqueId());
+                        if ((lockedChestCount+1) > getConfig().getInt("chest.max-chests")) {
+                            p.sendMessage(ChatColor.DARK_RED + "Sorry, you have locked too many chests!");
+                            return;
+                        }
+
                         // single chest case
                         c = new LockedChest(p.getUniqueId().toString(), p.getName(), b.getLocation());
                         db.saveChest(c);
@@ -450,16 +467,12 @@ public class ChestLocking extends JavaPlugin implements Listener {
 		if(!b.getType().toString().contains("CHEST")) return;
 		LockedChest c = db.getChest(b.getLocation());
 		if(c != null) {
-
             // Is the person breaking the chest the owner/in faction?
             Player p = e.getPlayer();
             if (p.getUniqueId().toString() != null && !c.canAccessChest(p.getUniqueId().toString(), p.getName())) {
                 p.sendMessage(ChatColor.DARK_RED + "Sorry, you can't break a locked chest!");
                 e.setCancelled(true);
             }
-
-            // do faction later
-
 
 			new BukkitRunnable()
 			{
@@ -472,6 +485,26 @@ public class ChestLocking extends JavaPlugin implements Listener {
 		}
 	}
 
+    /**
+     * handle if the chest has been blown up
+     * @param e
+     */
+    @EventHandler
+    public void onEntityExplode(EntityExplodeEvent e)
+    {
+        ArrayList<Block> list = new ArrayList<>(e.blockList());
+        for (Block block : list) {
+            if (block.getType() != Material.CHEST) continue;
+
+            LockedChest c = db.getChest(block.getLocation());
+            if (c==null) {
+                continue;
+            }
+            
+            // needs to be removed from files
+            db.deleteChest(block.getLocation());
+        }
+    }
 
     /**
      * Deals with people trying to take stuff out of chests with hoppers.
