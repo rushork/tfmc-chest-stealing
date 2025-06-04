@@ -22,7 +22,7 @@ public class ChestDatabase {
      */
     public void saveChest(LockedChest chest) {
 
-        File dir = new File("plugins/ChestStealing/Data");
+        File dir = new File("plugins/ChestLocking/Data");
         if (!dir.exists()) {
             dir.mkdirs();
         }       
@@ -31,7 +31,7 @@ public class ChestDatabase {
     			UUID uuid = UUID.randomUUID();
     			String uuidAsString = uuid.toString();
 
-                String filePath = "plugins/ChestStealing/Data/" + uuidAsString + ".ser";
+                String filePath = "plugins/ChestLocking/Data/" + uuidAsString + ".ser";
                 FileOutputStream fos = new FileOutputStream(filePath);
                 ObjectOutputStream oos = new ObjectOutputStream(fos);
                 oos.writeObject(chest);
@@ -44,7 +44,7 @@ public class ChestDatabase {
     }
 
     public boolean deleteChest(Location location) {
-        File folder = new File("plugins/ChestStealing/Data");
+        File folder = new File("plugins/ChestLocking/Data");
 
         if (!folder.exists() || !folder.isDirectory()) {
             return false;
@@ -71,7 +71,7 @@ public class ChestDatabase {
     
 
     public LockedChest getChest(Location location) {
-        File folder = new File("plugins/ChestStealing/Data");
+        File folder = new File("plugins/ChestLocking/Data");
 
         if (!folder.exists() || !folder.isDirectory()) {
             return null;
@@ -100,7 +100,7 @@ public class ChestDatabase {
     public Integer getChestCountUser(UUID uuid) {
         Integer count = 0;
 
-        File folder = new File("plugins/ChestStealing/Data");
+        File folder = new File("plugins/ChestLocking/Data");
 
         if (!folder.exists() || !folder.isDirectory()) {
             return 0;
@@ -129,7 +129,7 @@ public class ChestDatabase {
     public List<LockedChest> getAllChestsForUser(UUID uuid) {
         List<LockedChest> list = new ArrayList<LockedChest>();
 
-        File folder = new File("plugins/ChestStealing/Data");
+        File folder = new File("plugins/ChestLocking/Data");
 
         if (!folder.exists() || !folder.isDirectory()) {
             return list;

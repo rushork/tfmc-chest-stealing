@@ -104,14 +104,12 @@ public class ChestLocking extends JavaPlugin implements Listener {
         // get the chest we're trying to open/lockpick
         LockedChest c = db.getChest(b.getLocation()); 
 
-        // if are trying to LOCK the chest
-        if(hand.getType().equals(Material.IRON_INGOT) && p.isSneaking()) {
 
-            // check if the iron ingot is an mmoitem
-            ItemAPI api = (ItemAPI) TLibs.getApiInstance(APIType.ITEM_API);
-            if (!(api.getChecker().checkItemWithPath(hand, "m.tools.LOCKING_TOOL"))) {
-                return;
-            }
+        // check if the item is an mmoitem
+        ItemAPI api = (ItemAPI) TLibs.getApiInstance(APIType.ITEM_API);
+
+        // if are trying to LOCK the chest
+        if(p.isSneaking() && api.getChecker().checkItemWithPath(hand, "m.tools.LOCKING_TOOL")) {
  
             e.setCancelled(true);
 
@@ -189,15 +187,10 @@ public class ChestLocking extends JavaPlugin implements Listener {
 
             }
         } else if (c != null && 
-                    hand.getType().equals(Material.SHEARS) && 
                     p.isSneaking()
+                    && api.getChecker().checkItemWithPath(hand, "m.tools.LOCKPICK")
         ) {
 
-            // check if the shears is an mmoitem
-            ItemAPI api = (ItemAPI) TLibs.getApiInstance(APIType.ITEM_API);
-            if (!(api.getChecker().checkItemWithPath(hand, "m.tools.LOCKPICK"))) {
-                return;
-            }
  
             if (c.canAccessChest(p.getUniqueId().toString(), p.getName())) {
                 p.sendMessage(ChatColor.DARK_RED + "Sorry, you can't lockpick your own chest!");
@@ -256,10 +249,48 @@ public class ChestLocking extends JavaPlugin implements Listener {
                 p.sendMessage(ChatColor.RED + "Try again in " + secondsLeft + " seconds.");
                 return;
             } else {
+                // deal with double chests too
+                BlockState chestState = b.getState();
+                if (chestState instanceof Chest chest) {                                    
+                    Inventory inventory = chest.getInventory();                                    
+                    if (inventory instanceof DoubleChestInventory doubleChestInventory) {                                    
+                        // we are dealing with a double chest                                    
+                        DoubleChest doubleChest = (DoubleChest) doubleChestInventory.getHolder();                                    
+                        if (doubleChest != null) {                                    
+                            Chest leftChest = (Chest) doubleChest.getLeftSide();                                    
+                            Chest rightChest = (Chest) doubleChest.getRightSide();
+
+                            chestCooldowns.remove(leftChest.getLocation(), now);
+                            chestCooldowns.remove(rightChest.getLocation(), now);
+                        }
+                    } else {
+                        chestCooldowns.remove(chestLoc);
+                    }
+                }       
                 chestCooldowns.remove(chestLoc);
             }
         }
-        chestCooldowns.put(chestLoc, now);
+        
+        // deal with double chests too
+        BlockState chestState = b.getState();
+        if (chestState instanceof Chest chest) {                                    
+            Inventory inventory = chest.getInventory();                                    
+            if (inventory instanceof DoubleChestInventory doubleChestInventory) {                                    
+                // we are dealing with a double chest                                    
+                DoubleChest doubleChest = (DoubleChest) doubleChestInventory.getHolder();                                    
+                if (doubleChest != null) {                                    
+                    Chest leftChest = (Chest) doubleChest.getLeftSide();                                    
+                    Chest rightChest = (Chest) doubleChest.getRightSide();
+
+                    chestCooldowns.put(leftChest.getLocation(), now);
+                    chestCooldowns.put(rightChest.getLocation(), now);
+                }
+            } else {
+                chestCooldowns.put(chestLoc, now);
+            }
+        }                               
+
+
         p.sendMessage(ChatColor.ITALIC + "" + ChatColor.DARK_RED + "Lockpicking in progress...");
 
         BlockState state = b.getState();
