@@ -59,6 +59,8 @@ import org.bukkit.persistence.PersistentDataType;
  */
 public class ChestLocking extends JavaPlugin implements Listener {
 
+    private final Map<Location, LockedChest> lockedChestCache = new HashMap<>();
+
     private final Map<UUID, Block> lockpickingSessions = new HashMap<>(); // stores players and which block theyre lockpickig
     private final Map<UUID, BukkitRunnable> activeLockpickingTasks = new HashMap<>(); // stores players and which task is running the lockpicking
     private final Map<Location, Long> chestCooldowns = new HashMap<>(); // stores chests and how recently they have been lockpicked
@@ -72,6 +74,9 @@ public class ChestLocking extends JavaPlugin implements Listener {
         saveDefaultConfig();
         getServer().getPluginManager().registerEvents(this, this);
         getCommand(commands.cmd1).setExecutor(commands);
+
+        //db load all
+        this.lockedChestCache.putAll(db.loadAllChests());
     }
 
     /**
@@ -102,7 +107,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
         Block b = e.getClickedBlock();
 
         // get the chest we're trying to open/lockpick
-        LockedChest c = db.getChest(b.getLocation()); 
+        LockedChest c = lockedChestCache.get(b.getLocation()); 
 
 
         // check if the item is an mmoitem
@@ -132,16 +137,17 @@ public class ChestLocking extends JavaPlugin implements Listener {
                             Chest leftChest = (Chest) doubleChest.getLeftSide();
                             Chest rightChest = (Chest) doubleChest.getRightSide();
 
+                            //saving both sides
                             LockedChest lc = new LockedChest(p.getUniqueId().toString(), p.getName(), leftChest.getLocation());
                             db.saveChest(lc);
+                            lockedChestCache.put(lc.getLocation(), lc);
                             LockedChest rc = new LockedChest(p.getUniqueId().toString(), p.getName(), rightChest.getLocation());
                             db.saveChest(rc);
+                            lockedChestCache.put(rc.getLocation(), rc);
 
                             p.sendMessage(ChatColor.GOLD + "Successfully locked the double chest!");
                         }
                     } else {
-
-                        
                         Integer lockedChestCount = db.getChestCountUser(p.getUniqueId());
                         if ((lockedChestCount+1) > getConfig().getInt("chest.max-chests")) {
                             p.sendMessage(ChatColor.DARK_RED + "Sorry, you have locked too many chests!");
@@ -151,6 +157,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
                         // single chest case
                         c = new LockedChest(p.getUniqueId().toString(), p.getName(), b.getLocation());
                         db.saveChest(c);
+                        lockedChestCache.put(c.getLocation(), c);
                         p.sendMessage(ChatColor.GOLD + "Successfully locked the chest!");
                     }
                 }
@@ -168,8 +175,10 @@ public class ChestLocking extends JavaPlugin implements Listener {
                                 Chest leftChest = (Chest) doubleChest.getLeftSide();                                    
                                 Chest rightChest = (Chest) doubleChest.getRightSide();
 
-                                db.deleteChest(leftChest.getLocation());                                    
+                                db.deleteChest(leftChest.getLocation());     
+                                lockedChestCache.remove(leftChest.getLocation());                               
                                 db.deleteChest(rightChest.getLocation());
+                                lockedChestCache.remove(rightChest.getLocation());      
 
                                 p.sendMessage(ChatColor.LIGHT_PURPLE + "The locked double chest has been unlocked!");       
                                 e.setCancelled(true);                      
@@ -177,6 +186,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
                         } else {                                    
                             // single chest case                                    
                             db.deleteChest(b.getLocation());
+                            lockedChestCache.remove(b.getLocation());      
                             p.sendMessage(ChatColor.LIGHT_PURPLE + "The locked chest has been unlocked!");
                             e.setCancelled(true);                                 
                         }                                    
@@ -496,7 +506,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
 		Block b = e.getBlock();
 		String type = e.getBlock().getType().toString();
 		if(!b.getType().toString().contains("CHEST")) return;
-		LockedChest c = db.getChest(b.getLocation());
+		LockedChest c = lockedChestCache.get(b.getLocation());
 		if(c != null) {
             // Is the person breaking the chest the owner/in faction?
             Player p = e.getPlayer();
@@ -511,6 +521,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
 			    {
 					if(e.getBlock().getLocation().getBlock().getType().toString().equals(type)) return;
 					db.deleteChest(b.getLocation());
+                    lockedChestCache.remove(b.getLocation());  
 			    }
 			}.runTaskLater(this,5L);
 		}
@@ -527,13 +538,14 @@ public class ChestLocking extends JavaPlugin implements Listener {
         for (Block block : list) {
             if (block.getType() != Material.CHEST) continue;
 
-            LockedChest c = db.getChest(block.getLocation());
+            LockedChest c = lockedChestCache.get(block.getLocation());
             if (c==null) {
                 continue;
             }
             
             // needs to be removed from files
             db.deleteChest(block.getLocation());
+            lockedChestCache.remove(block.getLocation());  
         }
     }
 
@@ -546,7 +558,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
         // if its not from a chest into a hopper, return
         if(e.getInitiator().getType() != InventoryType.HOPPER) return;
         if(e.getSource().getType() != InventoryType.CHEST) return;
-        LockedChest c = db.getChest(e.getSource().getLocation());
+        LockedChest c = lockedChestCache.get(e.getSource().getLocation());
 
         // allow unlocked chests
         if (c == null) return;
@@ -605,7 +617,7 @@ public class ChestLocking extends JavaPlugin implements Listener {
             // Only cancel if this chest and one of the adjacent chests formed the double
             if (isPlacedChestInvolved && isAdjacentChestInvolved) {
                 // Check if either side is locked
-                if (db.getChest(leftLoc) != null || db.getChest(rightLoc) != null) {
+                if (lockedChestCache.get(leftLoc) != null || lockedChestCache.get(rightLoc) != null) {
                     // Cancel merge
                     BlockData placedData = placedBlock.getBlockData();
                     if (placedData instanceof org.bukkit.block.data.type.Chest placedChestData) {

@@ -7,7 +7,9 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.bukkit.Bukkit;
@@ -153,6 +155,37 @@ public class ChestDatabase {
         }
 
         return list;
+    }
+
+
+    //this is temporary patch, rushork can make this better
+    public Map<Location, LockedChest> loadAllChests() {
+        Map<Location, LockedChest> chestMap = new HashMap<>();
+
+        File folder = new File("plugins/ChestLocking/Data");
+
+        if (!folder.exists() || !folder.isDirectory()) {
+            return chestMap; // return empty map if folder doesn't exist
+        }
+
+        for (final File file : folder.listFiles()) {
+            if (!file.isFile() || !file.getName().endsWith(".ser")) continue;
+
+            try (
+                FileInputStream fis = new FileInputStream(file);
+                ObjectInputStream ois = new ObjectInputStream(fis)
+            ) {
+                LockedChest chest = (LockedChest) ois.readObject();
+                Location loc = chest.getLocation();
+                if (loc != null) {
+                    chestMap.put(loc, chest); // normalize to block location
+                }
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+
+        return chestMap;
     }
 
 }
